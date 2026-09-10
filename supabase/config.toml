@@ -1,0 +1,2 @@
+[functions.generate-exam]
+verify_jwt = true

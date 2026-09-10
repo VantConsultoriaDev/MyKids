@@ -1539,6 +1539,62 @@ A proposta é:
 
 AJUDAR A CRIANÇA A DESENVOLVER AUTONOMIA.
 
+==================================================
+47. ANDAMENTO ATUAL
+===================
+
+Implementado nesta etapa:
+
+* Protótipo navegável do dashboard do responsável em `index.html`.
+* Design responsivo em `styles.css`, com linguagem visual própria para o ambiente administrativo.
+* Seleção entre Ana e Pedro, rotina diária, metas, progresso acadêmico e próxima recompensa.
+* Interações básicas em `app.js`: seleção de criança, início de atividade, navegação e mensagens de feedback.
+
+Ainda não implementado:
+
+* Credenciais reais do projeto Supabase no ambiente local.
+* Persistência completa de todas as ações demonstrativas das telas.
+* Testes automatizados contra um projeto Supabase de homologação.
+
+Próxima sequência recomendada:
+
+1. Disponibilizar Node.js/npm e migrar o protótipo para React/TypeScript.
+2. Criar o design system compartilhado e a experiência infantil separada.
+3. Modelar autenticação, família, responsável e criança.
+4. Implementar o núcleo do MVP: rotina, estudo com cronômetro, tarefas, pontos/XP e recompensas.
+5. Adicionar persistência, autorização por função e testes de isolamento.
+
+Atualização da navegação:
+
+* As telas de Visão geral, Rotina, Estudos, Responsabilidades, Desempenho, Recompensas e Configurações já possuem views navegáveis no protótipo.
+* A navegação utiliza hash da URL, preserva voltar/avançar do navegador e atualiza o título da página.
+* As ações demonstrativas exibem feedback visual e estão prontas para serem conectadas aos serviços do backend.
+
+Integração Supabase:
+
+* `supabase-schema.sql` contém o modelo inicial do banco e políticas RLS para separar famílias e perfis.
+* `supabase-client.js` encapsula login, criação de conta, criação da família e criação da primeira criança.
+* `supabase-config.js` deve receber a URL e a chave anon pública do projeto Supabase.
+* O SDK é carregado por CDN, portanto esta versão continua executável sem npm/Node.js.
+
+Para ativar:
+
+1. Crie um projeto no Supabase.
+2. Execute `supabase-schema.sql` no SQL Editor.
+3. Copie Project URL e anon public key para `supabase-config.js`.
+4. Abra a rota `#login` e crie uma família pelo onboarding.
+
+As credenciais reais não foram incluídas no repositório.
+
+Isolamento entre famílias:
+
+* Execute `supabase-provision-family.sql` para publicar a RPC de criação da família.
+* Execute `supabase-tenant-isolation.sql` para aplicar RLS e as validações de relacionamento entre família e criança.
+* A aplicação carrega a família pelo vínculo autenticado e não usa dados de demonstração para o dashboard.
+* Não desative RLS no Supabase. A segurança não deve depender de filtros do frontend.
+
+Observação: `supabase-schema.sql` está vazio nesta etapa; use os scripts de migração acima sobre as tabelas já criadas no projeto Supabase.
+
 O responsável configura.
 
 A criança executa.
