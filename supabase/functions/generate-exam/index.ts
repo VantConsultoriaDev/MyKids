@@ -111,7 +111,30 @@ Deno.serve(async (request) => {
         text: { format: { type: 'json_schema', name: 'exam_preview', strict: true, schema: questionSchema } },
       }),
     });
-    if (!openAiResponse.ok) throw new Error('Falha ao gerar a prova com a OpenAI.');
+
+    if (!openAiResponse.ok) {
+      const errorBody = await openAiResponse.text();
+      let parsedError: { error?: { message?: string; type?: string; code?: string | number; param?: string } } | null = null;
+
+      try {
+        parsedError = JSON.parse(errorBody) as { error?: { message?: string; type?: string; code?: string | number; param?: string } };
+      } catch {
+        parsedError = null;
+      }
+
+      const openAiMessage = parsedError?.error?.message || errorBody || 'Erro desconhecido da OpenAI.';
+
+      console.error('OpenAI API error:', {
+        status: openAiResponse.status,
+        type: parsedError?.error?.type ?? null,
+        code: parsedError?.error?.code ?? null,
+        param: parsedError?.error?.param ?? null,
+        message: openAiMessage,
+      });
+
+      throw new Error(`OpenAI: ${openAiMessage}`);
+    }
+
     const responseBody = await openAiResponse.json();
     const generated = parseStructuredJson(getOutputText(responseBody));
     const questions: ExamQuestion[] = validateQuestions(generated, input.objectiveCount, input.openCount, input.topics);
