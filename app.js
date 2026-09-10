@@ -305,11 +305,39 @@ function collectChildExamAnswers(form) {
   return answers;
 }
 
+function normalizeExamText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function evaluateOpenQuestionAnswer(answer, referenceAnswer) {
+  const normalizedAnswer = normalizeExamText(answer);
+  const normalizedReference = normalizeExamText(referenceAnswer);
+  if (!normalizedAnswer || !normalizedReference) return 0;
+
+  const answerWords = new Set(normalizedAnswer.split(' ').filter(Boolean));
+  const referenceWords = normalizedReference.split(' ').filter(Boolean);
+  const matchingWords = referenceWords.filter((word) => answerWords.has(word));
+  const similarity = referenceWords.length ? matchingWords.length / referenceWords.length : 0;
+
+  return similarity >= 0.35 || normalizedAnswer.includes(normalizedReference.slice(0, 32)) ? 1 : 0;
+}
+
 function scoreChildExam(session, answers) {
   return (session.exam.questions || []).reduce((score, question) => {
     const answer = answers[question.id];
     if (!answer) return score;
-    const isCorrect = question.question_type === 'multiple_choice' ? answer === question.correct_option : true;
+
+    if (question.question_type === 'multiple_choice') {
+      return score + (answer === question.correct_option ? Number(question.points) || 0 : 0);
+    }
+
+    const isCorrect = evaluateOpenQuestionAnswer(answer, question.reference_answer || question.referenceAnswer || '') === 1;
     return score + (isCorrect ? Number(question.points) || 0 : 0);
   }, 0);
 }
@@ -322,17 +350,28 @@ async function submitChildExam(expired = false) {
   const answers = form ? collectChildExamAnswers(form) : childExamSession.answers;
   childExamSession.answers = answers;
   const questions = childExamSession.exam.questions || [];
+  const totalPossibleScore = questions.reduce((total, question) => total + (Number(question.points) || 0), 0);
   const examScore = scoreChildExam(childExamSession, answers);
-  const answerRows = questions.filter((question) => answers[question.id]).map((question) => ({ questionId: question.id, answerText: answers[question.id], isCorrect: question.question_type === 'multiple_choice' ? answers[question.id] === question.correct_option : null, awardedPoints: question.question_type === 'multiple_choice' && answers[question.id] === question.correct_option ? Number(question.points) || 0 : question.question_type === 'open' ? Number(question.points) || 0 : 0 }));
+  const answerRows = questions.filter((question) => answers[question.id]).map((question) => {
+    const answer = answers[question.id];
+    const isCorrect = question.question_type === 'multiple_choice'
+      ? answer === question.correct_option
+      : evaluateOpenQuestionAnswer(answer, question.reference_answer || question.referenceAnswer || '') === 1;
+    const awardedPoints = isCorrect ? Number(question.points) || 0 : 0;
+    return { questionId: question.id, answerText: answer, isCorrect, awardedPoints };
+  });
   try {
     await window.MyKidsData.saveExamAttempt({ examId: childExamSession.exam.id, childId: childExamSession.exam.child_id, status: 'submitted', answers: answerRows, score: examScore, startedAt: new Date(childExamSession.startedAt).toISOString() });
     const examDate = new Date().toISOString().slice(0, 10);
     const examXp = Number(childExamSession.exam.xp_total) || 0;
     const examPoints = Number(childExamSession.exam.points_total) || 0;
-    awardProgression(childExamSession.exam.child_id, childExamSession.exam.name, examXp, examPoints, 'special', childExamSession.exam.id, examDate, 'Prova aplicada');
+    const scoreRatio = totalPossibleScore > 0 ? examScore / totalPossibleScore : 0;
+    const awardedXp = Math.round(examXp * scoreRatio);
+    const awardedPoints = Math.round(examPoints * scoreRatio);
+    awardProgression(childExamSession.exam.child_id, childExamSession.exam.name, awardedXp, awardedPoints, 'special', childExamSession.exam.id, examDate, 'Prova aplicada');
     childExamSession = null;
     navigate('crianca');
-    showToast(expired ? 'O tempo acabou. A prova foi encerrada e pontuada.' : 'Prova finalizada e pontuada.');
+    showToast(expired ? 'O tempo acabou. A prova foi encerrada e sua pontuação foi calculada pela taxa de acerto.' : 'Prova finalizada e pontuada pela taxa de acerto.');
   } catch (error) {
     childExamSession.submitting = false;
     showToast(resolveErrorMessage(error, 'Não foi possível finalizar a prova.'));
@@ -1023,7 +1062,7 @@ function bindActivityModal() {
         const themes = [...new Set(subjects.flatMap((item) => item.summary.split(',').map((theme) => theme.trim()).filter(Boolean)))];
         const request = { childId: data.get('child_id'), subjectId: subjects[0]?.subjectId, topics: themes, examDate: data.get('exam_date'), objectiveCount: Number(data.get('objective_count')), openCount: Number(data.get('open_count')), difficulty: data.get('difficulty') };
         if (!request.subjectId || !themes.length) { showToast('Selecione a matéria e pelo menos um dia com temas de estudo.'); button.disabled = false; button.textContent = 'Criar prova'; return; }
-        try { const preview = await window.MyKidsData.generateExamPreview(request); closeActivityModal(); openExamPreview(preview, { ...request, name: data.get('name').trim(), startTime: data.get('start_time'), durationMinutes: Number(data.get('duration_minutes')), subjects: subjects.map(({ subjectId, subject, summary }) => ({ subject, subjectId, summary })), xpTotal: Number(data.get('xp_total')), pointsTotal: Number(data.get('points_total')) }); } catch (error) { console.error('Erro ao gerar prévia da prova:', error); showToast(resolveErrorMessage(error, 'Não foi possível gerar a prévia.')); button.disabled = false; button.textContent = 'Criar prova'; } return;
+        try { const preview = await window.MyKidsData.generateExamPreview(request); closeActivityModal(); openExamPreview(preview, { ...request, scheduledDate: request.examDate, name: data.get('name').trim(), startTime: data.get('start_time'), durationMinutes: Number(data.get('duration_minutes')), subjects: subjects.map(({ subjectId, subject, summary }) => ({ subject, subjectId, summary })), xpTotal: Number(data.get('xp_total')), pointsTotal: Number(data.get('points_total')) }); } catch (error) { console.error('Erro ao gerar prévia da prova:', error); showToast(resolveErrorMessage(error, 'Não foi possível gerar a prévia.')); button.disabled = false; button.textContent = 'Criar prova'; } return;
       }
       const payload = { family_id: familyData.family.id, child_id: data.get('child_id'), kind: data.get('kind'), name: data.get('name').trim(), subject: subject?.name || null, subtopic: data.getAll('subtopic').filter(Boolean).join(', ') || null, recurrence: { type: data.get('recurrence_type'), weekdays: data.getAll('weekdays').map(Number), day_of_month: data.get('day_of_month') ? Number(data.get('day_of_month')) : null }, start_time: data.get('start_time') || null, duration_minutes: data.get('duration_minutes') ? Number(data.get('duration_minutes')) : null, notes: data.get('notes')?.trim() || null, xp_base: Number(data.get('xp_base')), points_base: Number(data.get('points_base')) };
     try {

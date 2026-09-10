@@ -117,6 +117,8 @@ grant select, insert, update, delete on public.exam_questions to authenticated;
 grant select, insert, update on public.exam_attempts to authenticated;
 grant select, insert, update on public.exam_answers to authenticated;
 
+drop function if exists public.approve_exam_with_questions;
+
 create or replace function public.approve_exam_with_questions(
   p_creation_key uuid,
   p_child_id uuid,

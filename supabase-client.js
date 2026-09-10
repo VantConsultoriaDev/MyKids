@@ -197,13 +197,33 @@
     async generateExamPreview(payload) {
       const { data, error } = await client.functions.invoke('generate-exam', { body: payload });
       if (error) {
-        console.error('Erro:', error);
-        const responseText = typeof error?.context?.text === 'function' ? await error.context.text() : null;
-        if (responseText) console.error('Resposta:', responseText);
+        console.error('Erro da Edge Function:', error);
 
         const context = error?.context && typeof error.context === 'object' ? error.context : null;
-        const detail = context?.error || context?.message || error.message || 'Não foi possível gerar a prévia da prova.';
-        throw new Error(detail);
+        let detail = 'Não foi possível gerar a prévia da prova.';
+
+        try {
+          if (typeof context?.text === 'function') {
+            const responseText = await context.text();
+            if (responseText) {
+              console.error('Resposta da Edge Function:', responseText);
+              try {
+                const parsed = JSON.parse(responseText);
+                detail = parsed?.error || parsed?.message || responseText;
+              } catch {
+                detail = responseText;
+              }
+            }
+          }
+        } catch (readError) {
+          console.warn('Não foi possível ler a resposta da Edge Function.', readError);
+        }
+
+        if (!detail || detail === 'Não foi possível gerar a prévia da prova.') {
+          detail = context?.error || context?.message || error.message || detail;
+        }
+
+        throw new Error(String(detail).trim() || 'Não foi possível gerar a prévia da prova.');
       }
       if (data?.error) throw new Error(data.error);
       return data;
