@@ -11,6 +11,7 @@ let studySubjects = [];
 let studySubjectsLoaded = false;
 let selectedScheduleDate = new Date();
 let overviewChildId = '';
+let currentChildSession = null;
 
 function scheduleDateKey(date) {
   const year = date.getFullYear();
@@ -73,8 +74,11 @@ const pageMeta = {
   responsabilidades: ['Responsabilidades', 'Distribua tarefas e reconheça cada conquista.'],
   relatorios: ['Relatórios', 'Uma leitura semanal do ritmo e da evolução da família.'],
   tempo: ['Tracker de tempo', 'Registre estudo, lazer e descanso em um só lugar.'],
-  crianca: ['Ambiente infantil', 'A experiência infantil para executar atividades e acompanhar conquistas.'],
+  crianca: ['Início', 'A experiência infantil para executar atividades e acompanhar conquistas.'],
+  perfil: ['Perfil', 'Acompanhe o avatar, XP, pontos e conquistas da criança.'],
+  loja: ['Loja', 'Personalize o avatar e continue a jornada infantil com itens e conquistas.'],
   login: ['Entrar', 'Acesse sua conta MyKids.'],
+  'child-login': ['Acesso infantil', 'Entre com o e-mail e senha cadastrados pelo responsável.'],
   onboarding: ['Começar com o MyKids', 'Configure a rotina da sua família em poucos passos.'],
   configuracoes: ['Configurações', 'Ajuste a experiência da família ao seu jeito.']
 };
@@ -288,11 +292,384 @@ function childExamRunner() {
   return `<div class="page-intro"><div><p class="eyebrow">PROVA EM ANDAMENTO</p><h1>${escapeHtml(session.exam.name)}</h1><p class="subtitle">Responda o que conseguir antes do tempo acabar.</p></div><div class="exam-countdown${remaining <= 60 ? ' is-warning' : ''}" id="exam-countdown" role="timer" aria-live="polite">${formatExamTime(remaining)}</div></div><form class="exam-runner" data-child-exam-form><div class="exam-question-list">${questions.map((question, index) => `<fieldset class="exam-question"><legend><strong>${index + 1}.</strong> ${escapeHtml(question.prompt)}</legend>${question.question_type === 'multiple_choice' ? `<div class="quiz-options">${(question.options || []).map((option) => `<label><input type="radio" name="question-${escapeHtml(question.id)}" value="${escapeHtml(option)}"${session.answers[question.id] === option ? ' checked' : ''}><span>${escapeHtml(option)}</span></label>`).join('')}</div>` : `<textarea name="question-${escapeHtml(question.id)}" rows="4" placeholder="Escreva sua resposta">${escapeHtml(session.answers[question.id] || '')}</textarea>`}</fieldset>`).join('')}</div><div class="exam-runner-actions"><span>O envio será automático quando o tempo terminar.</span><button class="primary-button" type="submit">Finalizar prova</button></div></form>`;
 }
 
+function getCurrentChildProfile() {
+  if (currentChildSession) {
+    return familyData.children?.find((entry) => entry.id === currentChildSession.childId) || {
+      id: currentChildSession.childId,
+      name: currentChildSession.childName || 'Criança',
+      age: currentChildSession.age || null,
+      avatar: currentChildSession.avatar || ''
+    };
+  }
+  return familyData.children?.[0] || null;
+}
+
+const CHILD_STORE_CATALOG = [
+  { id: 'rocket', emoji: '🚀', name: 'Foguete', cost: 0, rarity: 'inicial' },
+  { id: 'fox', emoji: '🦊', name: 'Raposa', cost: 40, rarity: 'comum' },
+  { id: 'bear', emoji: '🐼', name: 'Urso', cost: 60, rarity: 'comum' },
+  { id: 'frog', emoji: '🐸', name: 'Sapo', cost: 80, rarity: 'comum' },
+  { id: 'unicorn', emoji: '🦄', name: 'Unicórnio', cost: 120, rarity: 'raro' },
+  { id: 'robot', emoji: '🤖', name: 'Robô', cost: 180, rarity: 'raro' },
+  { id: 'star', emoji: '🌟', name: 'Estrela', cost: 220, rarity: 'épico' },
+  { id: 'console', emoji: '🎮', name: 'Console', cost: 260, rarity: 'épico' },
+  { id: 'dragon', emoji: '🐉', name: 'Dragão', cost: 330, rarity: 'lendário' },
+  { id: 'crown', emoji: '👑', name: 'Coroa', cost: 420, rarity: 'lendário' }
+];
+
+function getChildInventory(childId) {
+  const familyKey = familyData.family?.id || 'local';
+  const stored = localStorage.getItem(`mykids-child-store-${familyKey}-${childId}`);
+  if (!stored) {
+    return { selected: '🚀', owned: ['rocket'] };
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    return {
+      selected: parsed.selected || '🚀',
+      owned: Array.isArray(parsed.owned) && parsed.owned.length ? parsed.owned : ['rocket']
+    };
+  } catch {
+    return { selected: '🚀', owned: ['rocket'] };
+  }
+}
+
+function writeChildInventory(childId, inventory) {
+  const familyKey = familyData.family?.id || 'local';
+  localStorage.setItem(`mykids-child-store-${familyKey}-${childId}`, JSON.stringify({
+    selected: inventory.selected || '🚀',
+    owned: Array.isArray(inventory.owned) ? inventory.owned : ['rocket']
+  }));
+}
+
+function getChildProfileAvatar(child, fallback = '★') {
+  const childId = child?.id || 'local';
+  const storeInventory = getChildInventory(childId);
+  if (storeInventory.selected) return storeInventory.selected;
+  const stored = localStorage.getItem(`mykids-child-avatar-${childId}`);
+  if (stored) return stored;
+  if (child?.avatar) return child.avatar;
+  return fallback;
+}
+
+function getChildGreeting(childName) {
+  const lastLetter = String(childName || '').trim().slice(-1).toLowerCase();
+  return lastLetter === 'a' ? 'Bem Vinda' : 'Bem Vindo';
+}
+
 function childPage() {
-  const child = familyData.children?.[0];
+  const child = getCurrentChildProfile();
   if (!child) return emptyPage('Ambiente infantil', 'Cadastre uma criança para liberar este ambiente.');
   if (childExamSession) return childExamRunner();
-  return `<div class="page-intro"><div><p class="eyebrow">AMBIENTE INFANTIL</p><h1>Olá, ${escapeHtml(child.name)}!</h1><p class="subtitle">Escolha uma prova para começar.</p></div></div><section class="panel managed-list-panel"><div class="panel-heading"><div><p class="eyebrow">AVALIAÇÕES</p><h2>Provas disponíveis</h2></div></div><div class="managed-list">${childExamList(child.id)}</div></section>`;
+
+  const progression = readProgression(child.id);
+  const levelData = getLevelProgress(progression.totalXp || 0);
+  const childActivities = activities.filter((activity) => activity.child_id === child.id);
+  const todayKey = scheduleDateKey(new Date());
+  const pendingToday = childActivities.filter((activity) => activityIsScheduled(activity, new Date()) && !activity.occurrences?.some((occurrence) => occurrence.occurrence_date === todayKey && occurrence.status === 'completed')).length;
+  const completedToday = childActivities.filter((activity) => activity.occurrences?.some((occurrence) => occurrence.occurrence_date === todayKey && occurrence.status === 'completed')).length;
+  const totalToday = Math.max(1, childActivities.filter((activity) => activityIsScheduled(activity, new Date())).length || 1);
+  const completionRate = Math.min(100, Math.round((completedToday / totalToday) * 100));
+  const nextExam = exams.filter((exam) => exam.child_id === child.id).slice(0, 2);
+  const dailyActivities = childActivities.slice(0, 3);
+  const avatar = getChildProfileAvatar(child, '★');
+  const greeting = getChildGreeting(child.name);
+
+  const today = new Date();
+  const weekdayLabel = new Intl.DateTimeFormat('pt-BR', { weekday: 'long' }).format(today).split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('-');
+  const dateLabel = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(today);
+  const pendingPercent = totalToday ? Math.round((pendingToday / totalToday) * 100) : 0;
+  const completedPercent = totalToday ? Math.round((completedToday / totalToday) * 100) : 0;
+
+  return `
+    <div class="child-app child-game-shell">
+      <header class="child-header">
+        <div class="child-greeting">
+          <span class="status-chip">ONLINE</span>
+          <strong>${greeting}, ${escapeHtml(child.name)}!</strong>
+        </div>
+        <div class="child-header-actions">
+          <button class="text-button child-logout" type="button" data-child-action="logout">Sair</button>
+        </div>
+      </header>
+
+      <section class="child-hero child-launcher">
+        <div class="child-launcher-copy">
+          <p class="eyebrow child-level-eyebrow">LEVEL ${levelData.level}</p>
+          <h1>você está na sua jornada por muitas conquistas</h1>
+          <p class="subtitle">Cada tarefa concluída transforma esforço em coragem, aprendizado e vitória.</p>
+          <p class="subtitle motivational-line">Hoje é dia de avançar, crescer e escrever uma nova história.</p>
+        </div>
+        <div class="child-hero-art" aria-label="Avatar da criança">${escapeHtml(avatar)}</div>
+      </section>
+
+      <nav class="game-bar" aria-label="Menu infantil">
+        <button class="game-bar-item active" type="button" data-page="crianca">
+          <span>🏠</span>
+          <small>Início</small>
+        </button>
+        <button class="game-bar-item" type="button" data-page="perfil">
+          <span>🧭</span>
+          <small>Perfil</small>
+        </button>
+        <button class="game-bar-item" type="button" data-page="loja">
+          <span>🛍️</span>
+          <small>Loja</small>
+        </button>
+      </nav>
+
+      <section class="child-summary-grid">
+        <div class="child-summary-card">
+          <span>Hoje</span>
+          <strong>${weekdayLabel}, ${dateLabel}</strong>
+        </div>
+        <div class="child-summary-card">
+          <span>Pendentes</span>
+          <strong>${pendingToday} (${pendingPercent}%)</strong>
+          <small>tarefas em andamento</small>
+        </div>
+        <div class="child-summary-card">
+          <span>Concluídos</span>
+          <strong>${completedToday} (${completedPercent}%)</strong>
+          <small>feito hoje</small>
+        </div>
+        <div class="child-summary-card">
+          <span>Percentual</span>
+          <strong>${completionRate}%</strong>
+          <small>do dia</small>
+        </div>
+      </section>
+
+      <section class="child-stats">
+        <div class="stat-card stat-card-xp">
+          <span>XP</span>
+          <strong>${progression.totalXp || 0}</strong>
+          <small>${levelData.currentXp}/${levelData.requiredXp}</small>
+        </div>
+        <div class="stat-card stat-card-streak">
+          <span>Level</span>
+          <strong>${levelData.level}</strong>
+          <small>fases avançadas</small>
+        </div>
+        <div class="stat-card stat-card-exams">
+          <span>Pontos</span>
+          <strong>${Number(progression.points || 0)}</strong>
+          <small>acumulados</small>
+        </div>
+      </section>
+
+      <section class="child-content-grid">
+        <div class="panel child-panel mission-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">MISSÕES</p><h2>Hoje</h2></div>
+          </div>
+          <div class="child-quest-list">
+            ${dailyActivities.length ? dailyActivities.map((activity) => `
+              <div class="child-quest-item">
+                <span class="quest-badge">✓</span>
+                <div>
+                  <strong>${escapeHtml(activity.name)}</strong>
+                  <small>${escapeHtml(activity.subject || 'Tarefa da rotina')}</small>
+                </div>
+              </div>
+            `).join('') : '<div class="empty-panel-message"><strong>Sem missões hoje</strong><span>O responsável vai lançar novas tarefas para você.</span></div>'}
+          </div>
+        </div>
+
+        <div class="panel child-panel progress-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">PROGRESSO</p><h2>Conquista atual</h2></div>
+          </div>
+          <div class="child-progress-box">
+            <div class="progress-track"><i style="width:${levelData.percentage}%"></i></div>
+            <div class="child-progress-meta"><span>Fase atual</span><strong>${levelData.percentage}%</strong></div>
+          </div>
+          <div class="child-badges">
+            <span>🏆 XP ${progression.totalXp || 0}</span>
+            <span>🎯 ${Number(progression.points || 0)} pontos</span>
+            <span>🌟 nível ${levelData.level}</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel child-panel full-width challenge-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">SALA DE DESAFIOS</p><h2>Provas para jogar</h2></div>
+        </div>
+        <div class="child-exam-grid">
+          ${nextExam.length ? nextExam.map((exam) => `
+            <article class="child-exam-card">
+              <div class="exam-card-top">
+                <span class="exam-tag">PROVA</span>
+                <strong>${escapeHtml(exam.name)}</strong>
+              </div>
+              <p>${exam.question_count} questões · ${escapeHtml(exam.subjects?.[0]?.subject || 'Matéria')}</p>
+              <button class="primary-button child-exam-start" type="button" data-exam-id="${escapeHtml(exam.id)}">Jogar</button>
+            </article>
+          `).join('') : '<div class="empty-panel-message"><strong>Nenhuma prova disponível</strong><span>Fique de olho: novas aventuras chegam em breve.</span></div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function childProfilePage() {
+  const child = getCurrentChildProfile();
+  if (!child) return emptyPage('Perfil infantil', 'Cadastre uma criança para visualizar o perfil.');
+  const progression = readProgression(child.id);
+  const levelData = getLevelProgress(progression.totalXp || 0);
+  const avatar = getChildProfileAvatar(child, '★');
+  const inventory = getChildInventory(child.id);
+  const unlockedCount = inventory.owned?.length || 0;
+  const greeting = getChildGreeting(child.name);
+
+  return `
+    <div class="child-app child-game-shell child-profile-shell">
+      <header class="child-header">
+        <div class="child-greeting">
+          <span class="status-chip">HUD</span>
+          <strong>${greeting}, ${escapeHtml(child.name)}!</strong>
+        </div>
+        <div class="child-header-actions">
+          <button class="text-button child-logout" type="button" data-child-action="logout">Sair</button>
+        </div>
+      </header>
+
+      <section class="child-hero child-launcher child-profile-hero">
+        <div class="child-launcher-copy">
+          <p class="eyebrow child-level-eyebrow">PERFIL DO HERÓI</p>
+          <h1>Seu avatar, XP e conquistas em um só lugar</h1>
+          <p class="subtitle">Acompanhe o nível, os pontos e o progresso da sua jornada.</p>
+        </div>
+        <div class="child-hero-art" aria-label="Avatar da criança">${escapeHtml(avatar)}</div>
+      </section>
+
+      <nav class="game-bar" aria-label="Menu infantil">
+        <button class="game-bar-item" type="button" data-page="crianca"><span>🏠</span><small>Início</small></button>
+        <button class="game-bar-item active" type="button" data-page="perfil"><span>🧭</span><small>Perfil</small></button>
+        <button class="game-bar-item" type="button" data-page="loja"><span>🛍️</span><small>Loja</small></button>
+      </nav>
+
+      <section class="child-status-hud">
+        <article class="hud-stat">
+          <span>XP</span>
+          <strong>${progression.totalXp || 0}</strong>
+          <small>${levelData.currentXp}/${levelData.requiredXp}</small>
+        </article>
+        <article class="hud-stat">
+          <span>LEVEL</span>
+          <strong>${levelData.level}</strong>
+          <small>fases avançadas</small>
+        </article>
+        <article class="hud-stat">
+          <span>PONTOS</span>
+          <strong>${Number(progression.points || 0)}</strong>
+          <small>acumulados</small>
+        </article>
+      </section>
+
+      <section class="child-profile-grid">
+        <div class="panel child-panel profile-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">AVATAR</p><h2>Meu herói</h2></div>
+          </div>
+          <div class="profile-hero-card">
+            <div class="profile-avatar-large">${escapeHtml(avatar)}</div>
+            <div>
+              <h3>${escapeHtml(child.name)}</h3>
+              <p>Level ${levelData.level} · ${progression.totalXp || 0} XP</p>
+            </div>
+          </div>
+          <div class="profile-meta-list">
+            <div><span>Conquistas</span><strong>${Math.max(0, (progression.history || []).length)}</strong></div>
+            <div><span>Itens</span><strong>${unlockedCount}</strong></div>
+            <div><span>Progresso</span><strong>${levelData.percentage}%</strong></div>
+          </div>
+        </div>
+
+        <div class="panel child-panel profile-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">EVOLUÇÃO</p><h2>Resumo da jornada</h2></div>
+          </div>
+          <div class="child-progress-box">
+            <div class="progress-track"><i style="width:${levelData.percentage}%"></i></div>
+            <div class="child-progress-meta"><span>Progresso atual</span><strong>${levelData.percentage}%</strong></div>
+          </div>
+          <div class="child-badges">
+            <span>🏆 XP ${progression.totalXp || 0}</span>
+            <span>🎯 ${Number(progression.points || 0)} pontos</span>
+            <span>🌟 nível ${levelData.level}</span>
+          </div>
+          <button class="primary-button child-exam-start" type="button" data-page="loja">Personalizar avatar</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function childStorePage() {
+  const child = getCurrentChildProfile();
+  if (!child) return emptyPage('Loja infantil', 'Cadastre uma criança para visualizar a loja.');
+  const avatar = getChildProfileAvatar(child, '★');
+  const inventory = getChildInventory(child.id);
+  const progression = readProgression(child.id);
+  const points = Number(progression.points || 0);
+
+  return `
+    <div class="child-app child-game-shell child-store-shell">
+      <header class="child-header">
+        <div class="child-greeting">
+          <span class="eyebrow">LOJA</span>
+          <strong>${escapeHtml(child.name)}</strong>
+        </div>
+        <div class="child-header-actions">
+          <button class="text-button child-logout" type="button" data-child-action="logout">Sair</button>
+        </div>
+      </header>
+
+      <section class="child-hero child-launcher child-store-hero">
+        <div class="child-launcher-copy">
+          <p class="eyebrow">PERSONALIZAÇÃO</p>
+          <h1>Loja</h1>
+          <p class="subtitle">Compre itens, personalize o avatar e continue sua jornada.</p>
+        </div>
+        <div class="child-hero-art">${escapeHtml(avatar)}</div>
+      </section>
+
+      <nav class="game-bar" aria-label="Menu infantil">
+        <button class="game-bar-item" type="button" data-page="crianca"><span>🏠</span><small>Início</small></button>
+        <button class="game-bar-item" type="button" data-page="perfil"><span>🧭</span><small>Perfil</small></button>
+        <button class="game-bar-item active" type="button" data-page="loja"><span>🛍️</span><small>Loja</small></button>
+      </nav>
+
+      <section class="panel child-panel profile-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">ARMAZENAMENTO</p><h2>Itens desbloqueados</h2></div>
+        </div>
+        <div class="store-items-grid">
+            ${CHILD_STORE_CATALOG.map((item) => {
+              const owned = inventory.owned.includes(item.id);
+              const equipped = inventory.selected === item.emoji;
+              const priceText = item.cost ? `${item.cost} pts` : 'Grátis';
+              const actionLabel = owned ? (equipped ? 'Equipado' : 'Usar') : `Comprar · ${priceText}`;
+              return `
+                <article class="store-item-card${equipped ? ' equipped' : ''}">
+                  <div class="store-item-art">${escapeHtml(item.emoji)}</div>
+                  <div class="store-item-copy">
+                    <strong>${escapeHtml(item.name)}</strong>
+                    <small>${owned ? 'Disponível' : `Custa ${priceText}`}</small>
+                    <span class="store-item-rarity">${escapeHtml(item.rarity || 'comum')}</span>
+                  </div>
+                  <button class="primary-button store-item-button${owned && !equipped ? ' secondary' : ''}" type="button" data-store-item="${escapeHtml(item.id)}" data-store-action="${owned ? 'equip' : 'buy'}" ${owned && equipped ? 'disabled' : ''}>${actionLabel}</button>
+                </article>
+              `;
+            }).join('')}
+          </div>
+          <button class="text-button child-profile-back" type="button" data-page="crianca">Voltar ao painel</button>
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function collectChildExamAnswers(form) {
@@ -379,6 +756,65 @@ async function submitChildExam(expired = false) {
 }
 
 function bindChildPage() {
+  document.querySelectorAll('.game-bar-item').forEach((button) => {
+    if (button.dataset.boundChildNav === 'true') return;
+    button.dataset.boundChildNav = 'true';
+    button.addEventListener('click', () => {
+      const nextPage = button.dataset.page || 'crianca';
+      navigate(nextPage);
+    });
+  });
+
+  document.querySelectorAll('.avatar-option').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('.avatar-option').forEach((option) => option.classList.toggle('selected', option === button));
+      button.setAttribute('data-selected', 'true');
+    });
+  });
+
+  document.querySelectorAll('[data-store-item]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const child = getCurrentChildProfile();
+      if (!child) return;
+      const itemId = button.dataset.storeItem;
+      const catalogItem = CHILD_STORE_CATALOG.find((item) => item.id === itemId);
+      const inventory = getChildInventory(child.id);
+      const progression = readProgression(child.id);
+      const availablePoints = Number(progression.points || 0);
+      if (!catalogItem) return;
+
+      if (button.dataset.storeAction === 'buy') {
+        if (availablePoints < catalogItem.cost) {
+          showToast(`Faltam ${Math.max(0, catalogItem.cost - availablePoints)} pontos para comprar ${catalogItem.name}.`);
+          return;
+        }
+        progression.points = Math.max(0, availablePoints - catalogItem.cost);
+        writeProgression(child.id, progression);
+        inventory.owned = Array.from(new Set([...inventory.owned, itemId]));
+        inventory.selected = catalogItem.emoji;
+        writeChildInventory(child.id, inventory);
+        showToast(`${catalogItem.name} comprado e equipado.`);
+        navigate('loja');
+        return;
+      }
+
+      inventory.selected = catalogItem.emoji;
+      writeChildInventory(child.id, inventory);
+      showToast(`${catalogItem.name} agora está no perfil da criança.`);
+      navigate('loja');
+    });
+  });
+
+  document.querySelector('[data-child-action="save-avatar"]')?.addEventListener('click', () => {
+    const selected = document.querySelector('.avatar-option.selected');
+    const child = getCurrentChildProfile();
+    if (!child || !selected) return;
+    const avatar = selected.dataset.avatarSelect;
+    localStorage.setItem(`mykids-child-avatar-${child.id}`, avatar);
+    showToast('Avatar salva no perfil da criança.');
+    navigate('loja');
+  });
+
   document.querySelectorAll('.child-exam-start').forEach((button) => button.addEventListener('click', async () => {
     button.disabled = true;
     try {
@@ -396,11 +832,36 @@ function bindChildPage() {
     } catch (error) { button.disabled = false; showToast(resolveErrorMessage(error, 'Não foi possível abrir a prova.')); }
   }));
   document.querySelector('[data-child-exam-form]')?.addEventListener('submit', (event) => { event.preventDefault(); submitChildExam(); });
+  document.querySelector('[data-page="crianca"]')?.addEventListener('click', () => navigate('crianca'));
 }
 
 function settingsPage() {
   const familyName = familyData.family?.name || '';
-  return `<div class="page-intro"><div><p class="eyebrow">ADMINISTRAÇÃO DA FAMÍLIA</p><h1>Configurações</h1><p class="subtitle">Mantenha a experiência da família sempre alinhada.</p></div></div><section class="panel settings-panel"><p class="eyebrow">INFORMAÇÕES BÁSICAS</p><h2>Perfil da família</h2><p class="settings-copy">Esses dados aparecem apenas para os responsáveis da família.</p><div class="form-grid"><label>Nome da família<input value="${familyName}" placeholder="Nome da família"></label><label>Nome do responsável<input placeholder="Nome do responsável"></label><label class="full-field">E-mail principal<input placeholder="E-mail da conta" type="email"></label></div><div class="settings-divider"></div><p class="eyebrow">CRIANÇAS VINCULADAS</p><div class="empty-panel-message"><strong>${familyData.children?.length ? `${familyData.children.length} criança(s) cadastrada(s)` : 'Nenhuma criança cadastrada'}</strong><span>Os perfis vinculados aparecerão aqui.</span></div></section>`;
+  const accessEntries = readChildAccessList();
+  const childAccessRows = (familyData.children || []).map((child) => {
+    const entry = accessEntries.find((item) => item.childId === child.id);
+    return `
+      <div class="child-access-row" data-child-id="${escapeHtml(child.id)}">
+        <div class="child-access-header">
+          <strong>${escapeHtml(child.name || 'Criança')}</strong>
+          <span>${child.age ? `${child.age} anos` : 'Sem idade'}</span>
+        </div>
+        <label>
+          E-mail infantil
+          <input type="email" name="child-email" value="${escapeHtml(entry?.email || '')}" placeholder="helenadesouza@mykids.com.br" autocomplete="username" />
+        </label>
+        <label>
+          Senha infantil
+          <div class="password-field">
+            <input type="password" name="child-password" value="" placeholder="@Helena10" autocomplete="new-password" />
+            <button type="button" class="password-toggle" data-toggle-password aria-label="Mostrar senha">Mostrar</button>
+          </div>
+        </label>
+      </div>
+    `;
+  }).join('') || '<div class="empty-panel-message"><strong>Nenhuma criança cadastrada</strong><span>Adicione uma criança para configurar o acesso infantil.</span></div>';
+
+  return `<div class="page-intro"><div><p class="eyebrow">ADMINISTRAÇÃO DA FAMÍLIA</p><h1>Configurações</h1><p class="subtitle">Mantenha a experiência da família sempre alinhada.</p></div></div><section class="panel settings-panel"><p class="eyebrow">INFORMAÇÕES BÁSICAS</p><h2>Perfil da família</h2><p class="settings-copy">Esses dados aparecem apenas para os responsáveis da família.</p><div class="form-grid"><label>Nome da família<input value="${familyName}" placeholder="Nome da família"></label><label>Nome do responsável<input placeholder="Nome do responsável"></label><label class="full-field">E-mail principal<input placeholder="E-mail da conta" type="email"></label></div><div class="settings-divider"></div><form data-child-access-form><p class="eyebrow">ACESSO INFANTIL</p><h2>Login da criança</h2><p class="settings-copy">Cada criança pode ter um e-mail e senha próprios para entrar no painel infantil.</p><div class="child-access-grid">${childAccessRows}</div><button class="primary-button settings-save" type="submit">Salvar acessos infantis</button></form></section>`;
 }
 
 const managedPageSelection = { rotina: '', responsabilidades: '', estudos: '' };
@@ -1421,22 +1882,144 @@ function bindSearch() {
   });
 }
 
+const childLoginPage = () => '<div class="auth-screen"><div class="auth-brand"><span class="brand-mark">M</span><strong>my<span>kids</span></strong></div><div class="auth-card child-login-card"><p class="eyebrow">ACESSO INFANTIL</p><h1>Vamos para a aventura!</h1><p class="auth-subtitle">Use o e-mail e a senha cadastrados pelo responsável da família.</p><label>E-mail infantil<input class="child-login-email" type="email" placeholder="helenadesouza@mykids.com.br" autocomplete="username"></label><label>Senha<div class="password-field"><input class="child-login-password" type="password" placeholder="@Helena10" autocomplete="current-password"><button type="button" class="password-toggle" data-toggle-password aria-label="Mostrar senha">Mostrar</button></div></label><button class="primary-button auth-submit auth-child-login-button" data-auth="child-login">Entrar no painel da criança</button><div class="auth-footer"><button class="text-button route-button" data-page="login">Voltar ao responsável</button></div></div></div>';
+
 const pages = {
-  login: () => '<div class="auth-screen"><div class="auth-brand"><span class="brand-mark">M</span><strong>my<span>kids</span></strong></div><div class="auth-card"><p class="eyebrow">BEM-VINDO DE VOLTA</p><h1>Continue cuidando da rotina.</h1><p class="auth-subtitle">Entre para acompanhar cada pequeno avanço da sua família.</p><label>E-mail<input class="auth-email" type="email" placeholder="voce@email.com" autocomplete="email"></label><label>Senha<input class="auth-password" type="password" placeholder="Digite sua senha" autocomplete="current-password"></label><button class="primary-button auth-submit auth-login-button" data-auth="login">Entrar na minha conta</button><div class="auth-footer">Ainda não tem conta? <button class="text-button route-button" data-page="onboarding">Criar família grátis</button></div></div></div>',
-  onboarding: () => '<div class="auth-screen"><div class="auth-brand"><span class="brand-mark">M</span><strong>my<span>kids</span></strong></div><div class="onboarding-card"><p class="eyebrow">VAMOS COMEÇAR</p><h1>Conte um pouco sobre sua família.</h1><p class="auth-subtitle">Vamos personalizar o MyKids para a rotina de vocês.</p><div class="form-grid"><label>Seu nome<input class="signup-name" placeholder="Seu nome" autocomplete="name"></label><label>Nome da família<input class="signup-family" placeholder="Nome da família"></label><label>Nome da criança<input class="signup-child" placeholder="Nome da criança"></label><label>Idade<input class="signup-age" type="number" placeholder="Idade"></label><label class="full-field">E-mail<input class="signup-email" type="email" placeholder="voce@email.com" autocomplete="email"></label><label class="full-field">Senha<input class="signup-password" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="new-password"></label></div><button class="primary-button auth-submit auth-signup-button" data-auth="signup">Criar minha família</button></div></div>',
+  login: () => '<div class="auth-screen"><div class="auth-brand"><span class="brand-mark">M</span><strong>my<span>kids</span></strong></div><div class="auth-card"><p class="eyebrow">BEM-VINDO DE VOLTA</p><h1>Continue cuidando da rotina.</h1><p class="auth-subtitle">Entre para acompanhar cada pequeno avanço da sua família.</p><label>E-mail<input class="auth-email" type="email" placeholder="voce@email.com" autocomplete="email"></label><label>Senha<div class="password-field"><input class="auth-password" type="password" placeholder="Digite sua senha" autocomplete="current-password"><button type="button" class="password-toggle" data-toggle-password aria-label="Mostrar senha">Mostrar</button></div></label><button class="primary-button auth-submit auth-login-button" data-auth="login">Entrar na minha conta</button><div class="auth-footer">Ainda não tem conta? <button class="text-button route-button" data-page="onboarding">Criar família grátis</button></div><div class="auth-footer"><button class="text-button route-button" data-page="child-login">Entrar como criança</button></div></div></div>',
+  'child-login': childLoginPage,
+  childLogin: childLoginPage,
+  onboarding: () => '<div class="auth-screen"><div class="auth-brand"><span class="brand-mark">M</span><strong>my<span>kids</span></strong></div><div class="onboarding-card"><p class="eyebrow">VAMOS COMEÇAR</p><h1>Conte um pouco sobre sua família.</h1><p class="auth-subtitle">Vamos personalizar o MyKids para a rotina de vocês.</p><div class="form-grid"><label>Seu nome<input class="signup-name" placeholder="Seu nome" autocomplete="name"></label><label>Nome da família<input class="signup-family" placeholder="Nome da família"></label><label>Nome da criança<input class="signup-child" placeholder="Nome da criança"></label><label>Idade<input class="signup-age" type="number" placeholder="Idade"></label><label class="full-field">E-mail<input class="signup-email" type="email" placeholder="voce@email.com" autocomplete="email"></label><label class="full-field">Senha<div class="password-field"><input class="signup-password" type="password" placeholder="Mínimo de 6 caracteres" autocomplete="new-password"><button type="button" class="password-toggle" data-toggle-password aria-label="Mostrar senha">Mostrar</button></div></label></div><button class="primary-button auth-submit auth-signup-button" data-auth="signup">Criar minha família</button></div></div>',
   estudos: studyPage,
   responsabilidades: responsibilityPage,
   relatorios: () => emptyPage('Relatórios'),
   tempo: () => emptyPage('Tracker de tempo'),
   crianca: childPage,
+  perfil: childProfilePage,
+  loja: childStorePage,
   configuracoes: settingsPage
 };
 
 async function logout() {
   try { await window.MyKidsData?.signOut(); } catch (error) { showToast(resolveErrorMessage(error, 'Não foi possível sair agora.')); return; }
+  currentChildSession = null;
   authenticated = false;
   history.pushState({ page: 'login' }, '', '#login');
   navigate('login');
+}
+
+function normalizeChildPassword(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function legacyHashChildSecret(value) {
+  return String(value || '').trim().split('').reduce((total, char) => total + char.charCodeAt(0), 0).toString(36);
+}
+
+function hashChildSecret(value) {
+  return normalizeChildPassword(value).split('').reduce((total, char) => total + char.charCodeAt(0), 0).toString(36);
+}
+
+function buildChildAccessEntry({ childId, childName, childAge, email, password, familyId }) {
+  const typedPassword = String(password || '').trim();
+  const normalizedPassword = normalizeChildPassword(typedPassword);
+  return {
+    childId,
+    childName,
+    childAge,
+    email: String(email || '').trim().toLowerCase(),
+    password: typedPassword,
+    familyId: familyId || 'local',
+    passwordHash: typedPassword ? hashChildSecret(normalizedPassword) : ''
+  };
+}
+
+function readChildAccessList() {
+  const familyId = familyData.family?.id || 'local';
+  const entries = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key || !key.startsWith('mykids-child-access-')) continue;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+      if (Array.isArray(parsed)) entries.push(...parsed);
+    } catch (error) {
+      console.warn('Não foi possível carregar o acesso infantil salvo.', error);
+    }
+  }
+  if (familyId && !entries.some((entry) => entry.familyId === familyId)) {
+    try {
+      const currentFamilyEntries = JSON.parse(localStorage.getItem(`mykids-child-access-${familyId}`) || '[]');
+      if (Array.isArray(currentFamilyEntries)) entries.push(...currentFamilyEntries);
+    } catch (error) {
+      console.warn('Não foi possível ler o acesso infantil da família atual.', error);
+    }
+  }
+  return entries;
+}
+
+function writeChildAccessList(entries) {
+  const familyId = familyData.family?.id || 'local';
+  const normalizedEntries = (entries || []).map((entry) => buildChildAccessEntry({
+    childId: entry.childId,
+    childName: entry.childName,
+    childAge: entry.childAge,
+    email: entry.email,
+    password: entry.password,
+    familyId: entry.familyId || familyId
+  }));
+
+  const familyEntries = normalizedEntries.filter((entry) => entry.familyId === familyId);
+  const localEntries = normalizedEntries.filter((entry) => entry.familyId === 'local' || !entry.familyId);
+
+  localStorage.setItem(`mykids-child-access-${familyId}`, JSON.stringify(familyEntries));
+  localStorage.setItem('mykids-child-access-local', JSON.stringify(localEntries));
+}
+
+function resolveChildAccess(email, password) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const typedPassword = String(password || '').trim();
+  const normalizedPassword = normalizeChildPassword(typedPassword);
+  const passwordVariants = new Set([
+    typedPassword,
+    normalizedPassword,
+    String(typedPassword || '').toUpperCase(),
+    String(normalizedPassword || '').toUpperCase(),
+    hashChildSecret(typedPassword),
+    hashChildSecret(normalizedPassword),
+    legacyHashChildSecret(typedPassword),
+    legacyHashChildSecret(normalizedPassword),
+    legacyHashChildSecret(String(typedPassword || '').toUpperCase())
+  ]);
+
+  const list = readChildAccessList();
+  const match = list.find((entry) => {
+    const entryEmail = String(entry.email || '').trim().toLowerCase();
+    if (entryEmail !== normalizedEmail) return false;
+
+    const entryPassword = String(entry.password || '').trim();
+    const entryPasswordNormalized = normalizeChildPassword(entryPassword);
+    const entryHash = String(entry.passwordHash || '').trim();
+    const plainMatches = !!entryPassword && (
+      entryPassword === typedPassword ||
+      entryPasswordNormalized === normalizedPassword ||
+      entryPassword === normalizedPassword ||
+      entryPasswordNormalized === typedPassword
+    );
+    const hashMatches = !!entryHash && passwordVariants.has(entryHash);
+    const storedLegacyMatches = !!entryPassword && passwordVariants.has(hashChildSecret(entryPassword))
+      || !!entryPassword && passwordVariants.has(legacyHashChildSecret(entryPassword));
+
+    return plainMatches || hashMatches || storedLegacyMatches;
+  });
+
+  if (!match) return null;
+  const matchedChild = familyData.children?.find((child) => child.id === match.childId) || {
+    id: match.childId,
+    name: match.childName || 'Criança',
+    age: match.childAge || null,
+    email: match.email
+  };
+  return matchedChild;
 }
 
 function bindAuthActions() {
@@ -1445,6 +2028,7 @@ function bindAuthActions() {
     try {
       await window.MyKidsData.signIn(document.querySelector('.auth-email')?.value.trim(), document.querySelector('.auth-password')?.value);
       authenticated = true;
+      currentChildSession = null;
       await loadFamilyData();
       await loadActivities();
       await loadExams();
@@ -1452,18 +2036,92 @@ function bindAuthActions() {
       navigate('inicio');
     } catch (error) { showToast(resolveErrorMessage(error, 'Não foi possível entrar.')); button.disabled = false; }
   }));
+
+  document.querySelectorAll('[data-auth="child-login"]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const email = document.querySelector('.child-login-email')?.value.trim();
+      const password = document.querySelector('.child-login-password')?.value;
+      const child = resolveChildAccess(email, password);
+      if (!child) throw new Error('E-mail ou senha da criança inválidos.');
+      currentChildSession = { childId: child.id, email, childName: child.name, age: child.age };
+      authenticated = true;
+      await loadFamilyData();
+      await loadActivities();
+      await loadExams();
+      await loadStudySubjects();
+      navigate('crianca');
+    } catch (error) { showToast(resolveErrorMessage(error, 'Não foi possível entrar no painel infantil.')); button.disabled = false; }
+  }));
+
   document.querySelectorAll('[data-auth="signup"]').forEach((button) => button.addEventListener('click', async () => {
     button.disabled = true;
     const payload = { email: document.querySelector('.signup-email')?.value.trim(), password: document.querySelector('.signup-password')?.value, name: document.querySelector('.signup-name')?.value.trim(), familyName: document.querySelector('.signup-family')?.value.trim(), children: [{ name: document.querySelector('.signup-child')?.value.trim(), age: document.querySelector('.signup-age')?.value }].filter((child) => child.name), objectives: [] };
-    try { const result = await window.MyKidsData.signUp(payload); authenticated = Boolean(result?.session); if (authenticated) { await loadFamilyData(); await loadActivities(); await loadExams(); await loadStudySubjects(); } navigate(authenticated ? 'inicio' : 'login'); } catch (error) { showToast(resolveErrorMessage(error, 'Não foi possível criar a família.')); button.disabled = false; }
+    try { const result = await window.MyKidsData.signUp(payload); authenticated = Boolean(result?.session); currentChildSession = null; if (authenticated) { await loadFamilyData(); await loadActivities(); await loadExams(); await loadStudySubjects(); } navigate(authenticated ? 'inicio' : 'login'); } catch (error) { showToast(resolveErrorMessage(error, 'Não foi possível criar a família.')); button.disabled = false; }
   }));
 }
 
+function bindPasswordToggles() {
+  document.querySelectorAll('[data-toggle-password]').forEach((button) => {
+    if (button.dataset.boundToggle === 'true') return;
+    button.dataset.boundToggle = 'true';
+    button.addEventListener('click', () => {
+      const field = button.closest('.password-field')?.querySelector('input');
+      if (!field) return;
+      const shouldShow = field.type === 'password';
+      field.type = shouldShow ? 'text' : 'password';
+      button.textContent = shouldShow ? 'Ocultar' : 'Mostrar';
+      button.setAttribute('aria-label', shouldShow ? 'Ocultar senha' : 'Mostrar senha');
+    });
+  });
+}
+
+function bindSettingsPage() {
+  const form = document.querySelector('[data-child-access-form]');
+  if (!form) return;
+  bindPasswordToggles();
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const rows = [...form.querySelectorAll('.child-access-row')].map((row) => {
+      const childId = row.dataset.childId;
+      const child = (familyData.children || []).find((entry) => entry.id === childId);
+      const email = row.querySelector('[name="child-email"]')?.value.trim().toLowerCase();
+      const password = String(row.querySelector('[name="child-password"]')?.value || '').trim();
+      if (!childId || !email || !password) return null;
+      return buildChildAccessEntry({
+        childId,
+        childName: child?.name || row.querySelector('.child-access-header strong')?.textContent || 'Criança',
+        childAge: child?.age || null,
+        email,
+        password,
+        familyId: familyData.family?.id || 'local'
+      });
+    }).filter(Boolean);
+    writeChildAccessList(rows);
+    showToast('Acessos infantis salvos.');
+  });
+}
+
 function navigate(page) {
-  const publicPages = ['login', 'onboarding'];
+  const publicPages = ['login', 'onboarding', 'child-login'];
+  const childFlowPages = ['crianca', 'perfil', 'loja'];
   const selectedPage = pageMeta[page] ? page : 'inicio';
-  if (!authenticated && !publicPages.includes(selectedPage)) { history.replaceState({ page: 'login' }, '', '#login'); return navigate('login'); }
-  document.body.classList.toggle('auth-mode', publicPages.includes(selectedPage));
+  const isChildSessionPage = currentChildSession && childFlowPages.includes(selectedPage);
+  if (currentChildSession && !publicPages.includes(selectedPage) && !childFlowPages.includes(selectedPage)) {
+    history.replaceState({ page: 'crianca' }, '', '#crianca');
+    return navigate('crianca');
+  }
+  if (currentChildSession && selectedPage === 'inicio') {
+    history.replaceState({ page: 'crianca' }, '', '#crianca');
+    return navigate('crianca');
+  }
+  if (!authenticated && !publicPages.includes(page) && !isChildSessionPage) {
+    history.replaceState({ page: 'login' }, '', '#login');
+    return navigate('login');
+  }
+  const childSessionActive = Boolean(currentChildSession) && !publicPages.includes(selectedPage);
+  document.body.classList.toggle('auth-mode', publicPages.includes(page));
+  document.body.classList.toggle('child-mode', childSessionActive);
   appView.innerHTML = selectedPage === 'inicio' ? overviewMarkup : pages[selectedPage]();
   document.querySelector('.breadcrumb strong').textContent = pageMeta[selectedPage][0];
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => item.classList.toggle('active', item.dataset.page === selectedPage));
@@ -1472,13 +2130,25 @@ function navigate(page) {
   bindThemeToggle();
   bindSearch();
   bindChildPicker();
-  if (!publicPages.includes(selectedPage)) renderFamilyData();
+  if (!publicPages.includes(selectedPage) && !currentChildSession) renderFamilyData();
   if (selectedPage === 'inicio') { renderOverviewActivities(); renderOverviewProgress(); bindOverviewActivities(); bindScheduleNavigation(refreshOverviewSchedule); }
+  if (selectedPage === 'crianca' || selectedPage === 'perfil' || selectedPage === 'loja') {
+    document.body.classList.add('child-mode');
+  }
   if (selectedPage === 'estudos') bindStudyPage();
   if (selectedPage === 'responsabilidades') bindActivityPage();
-  if (selectedPage === 'crianca') bindChildPage();
+  if (selectedPage === 'crianca' || selectedPage === 'perfil' || selectedPage === 'loja') bindChildPage();
+  if (selectedPage === 'configuracoes') bindSettingsPage();
   bindAuthActions();
+  bindPasswordToggles();
   document.querySelectorAll('.route-button').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.page)));
+  document.querySelectorAll('[data-child-action="logout"]').forEach((button) => button.addEventListener('click', () => { currentChildSession = null; navigate('login'); }));
+  document.querySelectorAll('[data-page]').forEach((button) => {
+    if (!button.dataset.boundPageNav && !button.classList.contains('nav-item')) {
+      button.dataset.boundPageNav = 'true';
+      button.addEventListener('click', () => navigate(button.dataset.page));
+    }
+  });
 }
 
 document.querySelectorAll('.nav-item[data-page]').forEach((item) => item.addEventListener('click', (event) => { event.preventDefault(); history.pushState({ page: item.dataset.page }, '', `#${item.dataset.page}`); navigate(item.dataset.page); }));
